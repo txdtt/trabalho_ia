@@ -7,28 +7,32 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_error, accuracy_score
 from datetime import timedelta
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="IA - Regressão e Classificação", layout="wide")
 
-# Função de cache para não baixar dados toda hora
+
 @st.cache_data(ttl=3600)
 def baixar_dados(ticker):
-    # Baixa dados de 2 anos
+    # baixa dados de 2 anos do yahoo finance
     df = yf.download(ticker, period='2y')
-    # Correção para o novo formato do yfinance (remove o MultiIndex)
-    if df is None or df.empty:
-        return None 
 
+    if df is None or df.empty:
+        return None
+
+    # correção para o novo formato do yfinance (remove o MultiIndex)
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.droplevel(1)
+
     return df
 
+
 # --- INTERFACE ---
-st.title('Previsão Híbrida: Regressão & Classificação')
+st.title('Previsão de valores de ações')
 st.markdown("""
-Este sistema utiliza **dois modelos de IA** simultâneos:
-1. **Classificação:** Para prever a direção (Alta/Baixa).
-2. **Regressão:** Para prever o preço futuro exato.
+Este projeto utiliza dois modelos de IA para previsão do mercado financeiro:
+1. **Classificação (RandomForestClassifier):**
+ Para prever se irá subir ou descer.
+
+2. **Regressão (RandomForestRegressor):** Para prever o preço futuro da ação.
 """)
 
 col1, col2 = st.columns([1, 3])
@@ -70,66 +74,68 @@ if btn_predict:
             df.dropna(inplace=True)
 
             # 2. Definindo os Alvos (Targets)
-            # Alvo da Classificação: 1 se subiu, 0 se caiu (comparado ao dia anterior)
-            # Shift(-1) pega o dado de "Amanhã" e traz para a linha de "Hoje" para treinar
+            # Alvo da Classificação: 1 se subiu, 0 se caiu (comparado ao
+            #                                               dia anterior)
+            # Shift(-1) pega o dado de "Amanhã" e traz para a linha de "Hoje"
+            #                                                    para treinar
             df['Target_Class'] = (df['Close'].shift(-1) > df['Close']).astype(int)
 
-            # Alvo da Regressão: O PREÇO exato de amanhã
+            # Alvo da Regressão: o PREÇO exato de amanhã
             df['Target_Reg'] = df['Close'].shift(-1)
-            
+
             # Removemos a última linha pois ela não tem o "amanhã" (Target é NaN)
             dados_treino = df.iloc[:-1].copy()
             ultimo_dia_para_prever = df.iloc[[-1]].copy() # Usaremos este para prever o futuro real
-            
+
             # 3. Separação das Features (X)
             features = ['Close', 'Close_Ontem', 'Media_Mov_9', 'Media_Mov_21', 'Retorno']
-            
+
             X = dados_treino[features]
-            y_class = dados_treino['Target_Class'] # Alvo Binário
-            y_reg = dados_treino['Target_Reg']     # Alvo Numérico (Preço)
-            
+            y_class = dados_treino['Target_Class']  # Alvo Binário
+            y_reg = dados_treino['Target_Reg']      # Alvo Numérico (Preço)
+
             # Split de Treino e Teste (Últimos 50 dias para validar)
             X_train, X_test, y_class_train, y_class_test, y_reg_train, y_reg_test = train_test_split(
                 X, y_class, y_reg, test_size=50, shuffle=False
             )
-            
+
             # 4. Treinamento dos Modelos
-            
+
             # Modelo 1: Random Forest Classifier (Direção)
             clf = RandomForestClassifier(n_estimators=100, random_state=42)
             clf.fit(X_train, y_class_train)
             acc = accuracy_score(y_class_test, clf.predict(X_test))
-            
+
             # Modelo 2: Random Forest Regressor (Preço)
             reg = RandomForestRegressor(n_estimators=100, random_state=42)
             reg.fit(X_train, y_reg_train)
             preds_reg = reg.predict(X_test)
             erro_medio = mean_absolute_error(y_reg_test, preds_reg)
-            
+
             # 5. PREVISÃO PARA O FUTURO (AMANHÃ)
             # Pegamos os dados de HOJE (ultimo_dia_para_prever) para prever AMANHÃ
             X_futuro = ultimo_dia_para_prever[features]
-            
+
             previsao_tendencia = clf.predict(X_futuro)[0]
             previsao_preco = reg.predict(X_futuro)[0]
-            
+
             data_atual = df.index[-1]
             data_futura = data_atual + timedelta(days=1)
-            
+
             # --- EXIBIÇÃO DOS RESULTADOS ---
             with col2:
                 # Métricas lado a lado
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Preço Atual", f"R$ {df['Close'].iloc[-1]:.2f}")
-                m2.metric("Previsão (Regressão)", f"R$ {previsao_preco:.2f}", 
-                          delta=f"{((previsao_preco - 
+                m2.metric("Previsão (Regressão)", f"R$ {previsao_preco:.2f}",
+                          delta=f"{((previsao_preco -
                                      df['Close'].iloc[-1])/df['Close']
                                     .iloc[-1])*100:.2f}%")
-                
+
                 tendencia_txt = "ALTA!!!" if previsao_tendencia == 1 else "BAIXA!!!"
                 cor_tendencia = "green" if previsao_tendencia == 1 else "red"
                 m3.markdown(f"**Tendência:** :{cor_tendencia}[{tendencia_txt}]")
-                
+
                 st.info(f"Erro médio do modelo de preço nos testes: R$ {erro_medio:.2f}")
 
                 # Lógica para verificar divergência
@@ -146,7 +152,7 @@ if btn_predict:
 
                 # --- GRÁFICO FINAL (O que você pediu) ---
                 fig = go.Figure()
-                
+
                 # Linha Histórica (Últimos 100 dias)
                 hist_df = df.tail(100)
                 fig.add_trace(go.Scatter(
@@ -154,7 +160,7 @@ if btn_predict:
                     mode='lines', name='Histórico Real',
                     line=dict(color='blue')
                 ))
-                
+
                 # Ponto da Previsão
                 fig.add_trace(go.Scatter(
                     x=[data_atual, data_futura],
@@ -164,15 +170,15 @@ if btn_predict:
                     line=dict(color='orange', width=3, dash='dot'),
                     marker=dict(size=10, color='orange')
                 ))
-                
+
                 fig.update_layout(
                     title=f"Projeção de Preço para {ticker}",
                     xaxis_title="Data",
                     yaxis_title="Preço (R$)",
                     hovermode="x unified"
                 )
-                
+
                 st.plotly_chart(fig, use_container_width=True)
-                
+
         else:
             st.error("Dados insuficientes para análise.")
