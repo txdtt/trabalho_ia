@@ -1,0 +1,12 @@
+Valores previstos das ações p/ 01/12
+
+C/ média móvel simples
+Ticker - 28/11 - 01/12
+----------------------
+PETR4 - 31.79 - 31.67
+BBAS3 - 22.47 - 21.92
+ABEV3 - 13.86 - 13.92
+EMBR3 - 84.04 - 79.28
+MGLU3 - 10.28 - 10.20
+NVDA  - 177.00 - 175.26
+GOOGL - 320.18 - 249.58

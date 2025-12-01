@@ -1,11 +1,13 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
+from pandas.tseries.offsets import BDay
 import plotly.graph_objects as go
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, accuracy_score
-from datetime import timedelta
+from sklearn.metrics import (mean_absolute_error, mean_squared_error, r2_score,
+                             accuracy_score, precision_score, recall_score, f1_score)
 
 st.set_page_config(page_title="IA - Regressão e Classificação", layout="wide")
 
@@ -56,104 +58,138 @@ with col1:
 
     btn_predict = st.button('Executar')
 
-# --- PROCESSAMENTO ---
 if btn_predict:
     with st.spinner(f'Treinando modelos para {ticker}...'):
         df = baixar_dados(ticker)
 
+        # verifica se há mais de 100 linhas na tabela (dataframe)
+        # necessário para calcular as médias móveis longas
         if len(df) > 100:
-            # 1. Feature Engineering (Criar dados para a IA aprender)
+            # média móvel dos últimos 9 dias
             df['Media_Mov_9'] = df['Close'].rolling(window=9).mean()
+
+            # média móvel dos últimos 21 dias
             df['Media_Mov_21'] = df['Close'].rolling(window=21).mean()
 
-            # LAGS (Atrasos): O preço de ontem ajuda a prever o de hoje
+            # LAGS (atrasos): o preço de ontem ajuda a prever o de hoje
             df['Close_Ontem'] = df['Close'].shift(1)
             df['Close_Anteontem'] = df['Close'].shift(2)
             df['Retorno'] = df['Close'].pct_change()
 
             df.dropna(inplace=True)
 
-            # 2. Definindo os Alvos (Targets)
-            # Alvo da Classificação: 1 se subiu, 0 se caiu (comparado ao
-            #                                               dia anterior)
-            # Shift(-1) pega o dado de "Amanhã" e traz para a linha de "Hoje"
-            #                                                    para treinar
+            # definindo alvos
             df['Target_Class'] = (df['Close'].shift(-1) > df['Close']).astype(int)
 
-            # Alvo da Regressão: o PREÇO exato de amanhã
             df['Target_Reg'] = df['Close'].shift(-1)
 
-            # Removemos a última linha pois ela não tem o "amanhã" (Target é NaN)
             dados_treino = df.iloc[:-1].copy()
-            ultimo_dia_para_prever = df.iloc[[-1]].copy() # Usaremos este para prever o futuro real
+            ultimo_dia_para_prever = df.iloc[[-1]].copy()
 
-            # 3. Separação das Features (X)
-            features = ['Close', 'Close_Ontem', 'Media_Mov_9', 'Media_Mov_21', 'Retorno']
+            features = ['Close', 'Close_Ontem', 'Media_Mov_9', 'Media_Mov_21',
+                        'Retorno']
 
             X = dados_treino[features]
-            y_class = dados_treino['Target_Class']  # Alvo Binário
-            y_reg = dados_treino['Target_Reg']      # Alvo Numérico (Preço)
+            y_class = dados_treino['Target_Class']
+            y_reg = dados_treino['Target_Reg']
 
-            # Split de Treino e Teste (Últimos 50 dias para validar)
+            # split de treino e teste (últimos 50 dias para validação)
             X_train, X_test, y_class_train, y_class_test, y_reg_train, y_reg_test = train_test_split(
                 X, y_class, y_reg, test_size=50, shuffle=False
             )
 
-            # 4. Treinamento dos Modelos
-
-            # Modelo 1: Random Forest Classifier (Direção)
+            # treinamento dos modelos
+            # direção
             clf = RandomForestClassifier(n_estimators=100, random_state=42)
             clf.fit(X_train, y_class_train)
             acc = accuracy_score(y_class_test, clf.predict(X_test))
 
-            # Modelo 2: Random Forest Regressor (Preço)
+            # preço
             reg = RandomForestRegressor(n_estimators=100, random_state=42)
             reg.fit(X_train, y_reg_train)
             preds_reg = reg.predict(X_test)
             erro_medio = mean_absolute_error(y_reg_test, preds_reg)
 
-            # 5. PREVISÃO PARA O FUTURO (AMANHÃ)
-            # Pegamos os dados de HOJE (ultimo_dia_para_prever) para prever AMANHÃ
+            # prevendo o futuro da ação
             X_futuro = ultimo_dia_para_prever[features]
 
             previsao_tendencia = clf.predict(X_futuro)[0]
             previsao_preco = reg.predict(X_futuro)[0]
 
             data_atual = df.index[-1]
-            data_futura = data_atual + timedelta(days=1)
+            data_futura = data_atual + BDay(1)
 
-            # --- EXIBIÇÃO DOS RESULTADOS ---
             with col2:
-                # Métricas lado a lado
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Preço Atual", f"R$ {df['Close'].iloc[-1]:.2f}")
-                m2.metric("Previsão (Regressão)", f"R$ {previsao_preco:.2f}",
-                          delta=f"{((previsao_preco -
-                                     df['Close'].iloc[-1])/df['Close']
-                                    .iloc[-1])*100:.2f}%")
+
+                if ".SA" in ticker:
+                    m1.metric("Preço Atual", f"R$ {df['Close'].iloc[-1]:.2f}")
+                    m2.metric("Previsão (Regressão)", f"R$ {previsao_preco:.2f}",
+                              delta=f"{((previsao_preco -
+                                         df['Close'].iloc[-1])/df['Close']
+                                        .iloc[-1])*100:.2f}%")
+                else:
+                    m1.metric("Preço Atual", f"$ {df['Close'].iloc[-1]:.2f}")
+                    m2.metric("Previsão (Regressão)", f"$ {previsao_preco:.2f}",
+                              delta=f"{((previsao_preco -
+                                         df['Close'].iloc[-1])/df['Close']
+                                        .iloc[-1])*100:.2f}%")
 
                 tendencia_txt = "ALTA!!!" if previsao_tendencia == 1 else "BAIXA!!!"
                 cor_tendencia = "green" if previsao_tendencia == 1 else "red"
                 m3.markdown(f"**Tendência:** :{cor_tendencia}[{tendencia_txt}]")
 
-                st.info(f"Erro médio do modelo de preço nos testes: R$ {erro_medio:.2f}")
+                mse = mean_squared_error(y_reg_test, preds_reg)
+                rmse = np.sqrt(mse)
+                r2 = r2_score(y_reg_test, preds_reg)
+                mape = np.mean(np.abs((y_reg_test - preds_reg) / y_reg_test)) * 100
 
-                # Lógica para verificar divergência
+                preds_class = clf.predict(X_test)
+
+                precision = precision_score(y_class_test, preds_class)
+                recall = recall_score(y_class_test, preds_class)
+                f1 = f1_score(y_class_test, preds_class)
+
+                st.write("### Relatório de Desempenho do Modelo")
+
+                tab_reg, tab_class = st.tabs(["Métricas de Preço (Regressão)", "Métricas de Tendência (Classificação)"])
+
+                with tab_reg:
+                    st.info(f"""
+                    **MAE (Erro Médio Absoluto):** R$ {erro_medio:.2f}
+
+                    **RMSE (Raiz do Erro Quadrático):** R$ {rmse:.2f} (penaliza erros grandes)
+
+                    **MAPE (Erro Percentual):** {mape:.2f}% (< 3% => ótimo)
+
+                    **R² (Score de Ajuste):** {r2:.3f}
+                    """)
+
+                with tab_class:
+                    st.info(f"""
+                    **Acurácia Global:** {acc:.1%}
+
+                    **Precisão (Precision):** {precision:.1%}
+
+                    **Revocação (Recall):** {recall:.1%} (% que indica quanto o modelo detectou corretamente a subida da ação)
+
+                    **F1-Score:** {f1:.3f} (média harmônica entre Precision e Recall)
+                    """)
+
+                # verificando divergência
                 preco_atual = df['Close'].iloc[-1]
                 variacao_regressao = previsao_preco - preco_atual
 
-                # Se Regressão diz que sobe (>0) e Classificação diz que cai (0), ou vice-versa
                 direcao_regressao = 1 if variacao_regressao > 0 else 0
 
                 if direcao_regressao != previsao_tendencia:
-                    st.warning("**Atenção: Divergência Detectada!** Os modelos de Preço e Tendência discordam. Isso indica alta volatilidade ou indefinição do mercado para amanhã.")
+                    st.warning("**Divergência!**")
                 else:
-                    st.success("**Sinal Forte:** Ambos os modelos concordam na direção do mercado!")
+                    st.success("Sem divergências.")
 
-                # --- GRÁFICO FINAL (O que você pediu) ---
                 fig = go.Figure()
 
-                # Linha Histórica (Últimos 100 dias)
+                # série histórica
                 hist_df = df.tail(100)
                 fig.add_trace(go.Scatter(
                     x=hist_df.index, y=hist_df['Close'],
@@ -161,7 +197,7 @@ if btn_predict:
                     line=dict(color='blue')
                 ))
 
-                # Ponto da Previsão
+                # previsão
                 fig.add_trace(go.Scatter(
                     x=[data_atual, data_futura],
                     y=[df['Close'].iloc[-1], previsao_preco],
